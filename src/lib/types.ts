@@ -3,6 +3,8 @@ export type IAItem = {
   displayName: string;
   material: string;
   texture?: string;
+  assetMode?: 'texture' | 'model';
+  modelPath?: string;
 };
 
 export type IACraftingRecipe = {

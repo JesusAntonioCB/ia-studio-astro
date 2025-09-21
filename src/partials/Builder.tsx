@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import type { IAProject, IAItem, IACraftingRecipe, IALoot } from '../lib/types';
 import vanilla from '../data/vanilla-items.json';
+import MaterialCombo from "../components/MaterialCombo";
+import TextureDrop from "../components/TextureDrop";
+import ModelDrop from "../components/ModelDrop";
+import TexturesForModel from "../components/TexturesForModel";
+import { rewriteModelNamespace } from "../lib/model-utils";
 import JSZip from 'jszip';
 import { generateYAML } from '../lib/toYAML';
 
@@ -11,6 +16,10 @@ const empty: IAProject = { namespace: 'myitems', items: [], recipes: [], loots: 
 export default function Builder() {
   const [project, setProject] = useState<IAProject>(empty);
   const [dlUrl, setDlUrl] = useState<string | null>(null);
+  const [textureFiles, setTextureFiles] = useState<Record<string, File | null>>({});
+  const [modelFiles, setModelFiles] = useState<Record<string, File | null>>({});
+  const [modelTextureFiles, setModelTextureFiles] = useState<Record<string, Record<string, File | null>>>({});
+  const [modelNeeded, setModelNeeded] = useState<Record<string, string[]>>({});
 
   const groups = vanilla as unknown as Groups;
 
@@ -35,11 +44,49 @@ export default function Builder() {
 
   async function exportZip() {
     const zip = new JSZip();
-    const { itemsYml, recipesYml, lootsYml } = generateYAML(project);
     const base = `contents/${project.namespace}`;
+
+    const { itemsYml, recipesYml, lootsYml } = generateYAML(project);
     zip.file(`${base}/items.yml`, itemsYml);
     zip.file(`${base}/recipes.yml`, recipesYml);
     zip.file(`${base}/loots.yml`, lootsYml);
+
+    // Assets por ítem
+    for (const it of project.items) {
+      const mode = it.assetMode ?? 'texture';
+
+      if (mode === 'texture') {
+        // PNG simple
+        const file = textureFiles[it.id];
+        if (file && it.texture) {
+          const clean = it.texture.replace(/^\/+/, "");
+          zip.file(`${base}/textures/${clean}.png`, file);
+        }
+      } else if (mode === 'model') {
+        // modelo .json + texturas declaradas
+        const modelFile = modelFiles[it.id];
+        if (modelFile && it.modelPath) {
+          const raw = await modelFile.text();
+          // reescribe namespace en textures.* -> "<namespace>:<subpath>"
+          const rewritten = rewriteModelNamespace(raw, project.namespace);
+          const modelOut = `${base}/models/${it.modelPath.replace(/^\/+/, "")}.json`;
+          zip.file(modelOut, rewritten);
+
+          // ahora empaqueta las texturas necesarias, si el usuario las subió
+          const needed = modelNeeded[it.id] ?? [];
+          const selected = modelTextureFiles[it.id] ?? {};
+          for (const sub of needed) {
+            const tex = selected[sub];
+            if (tex) {
+              // guardamos como .png (aunque venga jpg, IA usa rutas sin ext; el empaquetado puede tolerar png recomendada)
+              const clean = sub.replace(/^\/+/, "");
+              zip.file(`${base}/textures/${clean}.png`, tex);
+            }
+          }
+        }
+      }
+    }
+
     const blob = await zip.generateAsync({ type: 'blob' });
     const url = URL.createObjectURL(blob);
     setDlUrl(url);
@@ -80,21 +127,93 @@ export default function Builder() {
                    value={it.displayName}
                    onChange={e => { const items = [...project.items]; items[idx] = { ...items[idx], displayName: e.target.value }; setProject(p => ({ ...p, items })); }}
                    placeholder="Display name" />
-            <select className="rounded-xl bg-zinc-900 border border-zinc-800 px-3 py-2"
-                    value={it.material}
-                    onChange={e => { const items = [...project.items]; items[idx] = { ...items[idx], material: e.target.value }; setProject(p => ({ ...p, items })); }}>
-              {Object.entries(groups).map(([label, list]) => (
-                list?.length ? (
-                  <optgroup key={label} label={label}>
-                    {list.map((m: string) => <option key={m} value={m}>{m}</option>)}
-                  </optgroup>
-                ) : null
-              ))}
-            </select>
-            <input className="rounded-xl bg-zinc-900 border border-zinc-800 px-3 py-2"
-                   value={it.texture ?? ''}
-                   onChange={e => { const items = [...project.items]; items[idx] = { ...items[idx], texture: e.target.value }; setProject(p => ({ ...p, items })); }}
-                   placeholder="textures path (opcional) ej. item/my_item" />
+            <MaterialCombo
+              value={it.material}
+              groups={groups as any}
+              onChange={(val) => {
+                const items = [...project.items];
+                items[idx] = { ...items[idx], material: val };
+                setProject((p) => ({ ...p, items }));
+              }}
+            />
+            {/* selector de modo */}
+            <div className="col-span-4 flex gap-3">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name={`assetMode-${it.id}`}
+                  checked={(it.assetMode ?? 'texture') === 'texture'}
+                  onChange={() => {
+                    const items = [...project.items];
+                    items[idx] = { ...items[idx], assetMode: 'texture' };
+                    setProject(p => ({ ...p, items }));
+                  }}
+                />
+                <span>Usar textura (PNG)</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name={`assetMode-${it.id}`}
+                  checked={(it.assetMode ?? 'texture') === 'model'}
+                  onChange={() => {
+                    const items = [...project.items];
+                    items[idx] = { ...items[idx], assetMode: 'model' };
+                    setProject(p => ({ ...p, items }));
+                  }}
+                />
+                <span>Usar modelo 3D (.json)</span>
+              </label>
+            </div>
+
+            {/* BLOQUE: textura simple */}
+            {(it.assetMode ?? 'texture') === 'texture' && (
+              <TextureDrop
+                valuePath={it.texture ?? ""}
+                file={textureFiles[it.id] ?? null}
+                onChange={(nextPath, file) => {
+                  let p = (nextPath || "").trim().replace(/^\/+/, "").replace(/\.(png|jpg|jpeg)$/i, "");
+                  const items = [...project.items];
+                  items[idx] = { ...items[idx], texture: p };
+                  setProject(pj => ({ ...pj, items }));
+                  setTextureFiles(tf => ({ ...tf, [it.id]: file ?? null }));
+                }}
+              />
+            )}
+
+            {/* BLOQUE: modelo 3D */}
+            {(it.assetMode ?? 'texture') === 'model' && (
+              <div className="space-y-3 col-span-4">
+                <ModelDrop
+                  valuePath={it.modelPath ?? ""}
+                  file={modelFiles[it.id] ?? null}
+                  onChange={(nextPath, file, needed) => {
+                    // normaliza path sin extensión:
+                    let p = (nextPath || "").trim().replace(/^\/+/, "").replace(/\.json$/i, "");
+                    const items = [...project.items];
+                    items[idx] = { ...items[idx], modelPath: p };
+                    setProject(pj => ({ ...pj, items }));
+                    if (file) setModelFiles(m => ({ ...m, [it.id]: file }));
+                    if (needed.length) {
+                      setModelNeeded(prev => ({ ...prev, [it.id]: needed }));
+                      // inicializa registro de files si no existe
+                      setModelTextureFiles(prev => ({ ...prev, [it.id]: prev[it.id] ?? {} }));
+                    }
+                  }}
+                />
+                {/* si el modelo requiere textures.* mostramos inputs/dropzones por subpath */}
+                <TexturesForModel
+                  needed={modelNeeded[it.id] ?? []}
+                  files={modelTextureFiles[it.id] ?? {}}
+                  onChange={(subpath, file) => {
+                    setModelTextureFiles(prev => ({
+                      ...prev,
+                      [it.id]: { ...(prev[it.id] ?? {}), [subpath]: file }
+                    }));
+                  }}
+                />
+              </div>
+            )}
           </div>
         ))}
       </section>

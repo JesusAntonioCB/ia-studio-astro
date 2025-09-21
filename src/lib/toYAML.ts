@@ -7,14 +7,26 @@ export function generateYAML(project: IAProject) {
 
   const itemsEntries: Record<string, any> = {};
   for (const it of project.items) {
-    itemsEntries[it.id] = {
+    const isModel = it.assetMode === 'model' && it.modelPath;
+    const entry: any = {
       display_name: it.displayName,
       resource: {
         material: it.material,
-        generate: !!it.texture,
-        ...(it.texture ? { textures: [it.texture] } : {})
       }
     };
+
+    if (isModel) {
+      // Opción moderna (IA4):
+      entry.graphics = { model: `${project.namespace}:${it.modelPath}` };
+      // (Opcional compatibilidad clásica)
+      entry.resource.model_path = it.modelPath;
+    } else {
+      // Textura clásica (generate + textures)
+      entry.resource.generate = !!it.texture;
+      if (it.texture) entry.resource.textures = [it.texture];
+    }
+
+    itemsEntries[it.id] = entry;
   }
   const itemsYml = stringify({ ...info, items: itemsEntries });
 
