@@ -1,0 +1,16 @@
+---
+import "../styles/global.css";
+import Builder from "../partials/Builder.tsx";
+import Base from "../layouts/Base.astro";
+---
+<Base title="IA Studio – ItemsAdder Generator">
+  <section class="space-y-4">
+    <h1 class="text-3xl font-bold">IA Studio <span class="text-zinc-400 text-xl">— Generador visual para ItemsAdder</span></h1>
+    <p class="text-zinc-300">
+      Define un <strong>namespace</strong>, agrega <strong>items</strong>, <strong>recipes</strong> y <strong>loots</strong>, y exporta un ZIP listo para <code>/plugins/ItemsAdder/contents/</code>.
+    </p>
+    <div class="rounded-2xl border border-zinc-800 p-4">
+      <Builder client:load />
+    </div>
+  </section>
+</Base>

@@ -1,0 +1,4 @@
+node_modules
+.git
+.astro
+src/data/vanilla-items.json
